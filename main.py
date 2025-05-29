@@ -33,7 +33,7 @@ def get_country(lat, lon):
         print("COULD NOT FETCH COUNTRY TRY AGAIN")
         print("COULD NOT FETCH COUNTRY TRY AGAIN")
         print("COULD NOT FETCH COUNTRY TRY AGAIN")
-        return ""
+        raise ValueError()
 
     data = response.json()
     return data.get("address", {}).get("country", "").lower()
@@ -224,7 +224,8 @@ def generate_password():
         """
 
         # Rule 5 does this already (Year 92)
-        # if not add Year 0
+        # but in case its being broken because of rule 10
+        password += str(0)
 
         """
         Rule 16
@@ -262,6 +263,7 @@ def run_playwright():
         )
 
         country = None
+        chess = None
 
         while True:
             password = password_queue.get()
@@ -362,6 +364,36 @@ def run_playwright():
 
             password_input.fill(password + captcha + country)
 
+            time.sleep(5)
+            print("READING CHESS")
+            print("READING CHESS")
+            print("READING CHESS")
+
+            chess_imgs = page.query_selector_all("img")
+            for img in chess_imgs:
+                src = img.get_attribute("src")
+                if src and "/password-game/chess/puzzle" in src and src.endswith(".svg"):
+                    svg_url = src if src.startswith(
+                        "http") else f"https://neal.fun{src}"
+                    try:
+                        svg_resp = requests.get(
+                            svg_url, headers={"User-Agent": ua.random})
+                        svg_resp.raise_for_status()
+                        with open("puzzle.svg", "wb") as f:
+                            # This is literally the FEN string not a svg
+                            # f.write(svg_resp.content)
+                            print(svg_resp.content)
+                            print(svg_resp.content)
+                            print(svg_resp.content)
+                            print(svg_resp.content)
+                            print(svg_resp.content)
+                            print(svg_resp.content)
+                        print(f"Downloaded chess puzzle SVG: {svg_url}")
+                    except Exception as e:
+                        print(f"Failed to download {svg_url}: {e}")
+
+            password_input.fill(password + captcha + country + chess)
+
             command = input("Enter a password to fill or 'exit' to quit: ")
 
             if command.lower() == "exit":
@@ -372,7 +404,13 @@ def run_playwright():
         browser.close()
 
 
-threading.Thread(target=generate_password, daemon=True).start()
-run_playwright()
+try:
+    threading.Thread(target=generate_password, daemon=True).start()
+    run_playwright()
+except KeyboardInterrupt:
+    pass
+except ValueError:
+    threading.Thread(target=generate_password, daemon=True).start()
+    run_playwright()
 
 # print(generate_password()) # not needed anymore, password is auto-generated
