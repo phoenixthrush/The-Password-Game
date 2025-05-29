@@ -3,14 +3,14 @@ import string
 import threading
 import queue
 import datetime
+import time
 
 import requests
 import ephem
 from playwright.sync_api import sync_playwright
-
 from fake_useragent import UserAgent
-ua = UserAgent()
 
+ua = UserAgent()
 password_queue = queue.Queue()
 
 
@@ -26,13 +26,20 @@ def get_country(lat, lon):
     headers = {
         "User-Agent": ua.random,
     }
-    response = requests.get(url, params=params, headers=headers)
-    response.raise_for_status()
+    try:
+        response = requests.get(url, params=params, headers=headers)
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        print("COULD NOT FETCH COUNTRY TRY AGAIN")
+        print("COULD NOT FETCH COUNTRY TRY AGAIN")
+        print("COULD NOT FETCH COUNTRY TRY AGAIN")
+        return ""
+
     data = response.json()
     return data.get("address", {}).get("country", "").lower()
 
 
-def generate_password(lat, lon):
+def generate_password():
     while True:
         password = ""
 
@@ -161,8 +168,12 @@ def generate_password(lat, lon):
         }
 
         response = requests.get(
-            f"https://neal.fun/api/password-game/wordle?date={today}", headers=headers)
-        password += response.json().get("answer", "")
+            f"https://neal.fun/api/password-game/wordle?date={today}", headers=headers
+        )
+        try:
+            password += response.json().get("answer", "")
+        except:
+            pass
 
         """
         Rule 12
@@ -208,16 +219,6 @@ def generate_password(lat, lon):
         password += moon_phase_to_emoji(phase)
 
         """
-        Rule 14
-        Your password must include the name of this country.
-        """
-
-        try:
-            password += get_country(lat, lon)
-        except requests.HTTPError:
-            pass
-
-        """
         Rule 15
         Your password must include a leap year.
         """
@@ -235,7 +236,6 @@ def generate_password(lat, lon):
         print(password)
         password_queue.put(password)
 
-
         # https://thepasswordgame.netlify.app
 
 
@@ -252,35 +252,115 @@ def run_playwright():
         except Exception:
             pass
 
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(1000)
 
-        iframe = page.query_selector("iframe.geo")
-        src = iframe.get_attribute("src") if iframe else None
-
-        lat, lon = None, None
-
-        if src and "!2d" in src:
-            try:
-                parts = src.split("!2d")[1]
-                lon_part, rest = parts.split("!3f")
-                lat_part = rest.split("!2d")[0]
-                lat = float(lat_part)
-                lon = float(lon_part)
-            except Exception:
-                pass
-
-        threading.Thread(target=generate_password,
-                         args=(lat, lon), daemon=True).start()
+        threading.Thread(target=generate_password, daemon=True).start()
 
         page.wait_for_selector('.tiptap.ProseMirror[contenteditable="true"]')
         password_input = page.query_selector(
             '.tiptap.ProseMirror[contenteditable="true"]'
         )
 
+        country = None
+
         while True:
             password = password_queue.get()
             password_input.click()
             password_input.fill(password)
+            time.sleep(1)
+
+            """
+            Rule 10
+            Your password must include this CAPTCHA:
+            """
+
+            captcha = ""
+            captcha_imgs = page.query_selector_all("img")
+
+            for img in captcha_imgs:
+                src = img.get_attribute("src")
+                if src and "/password-game/captchas/" in src and src.endswith(".png"):
+                    captcha = src.split("/")[-1].replace(".png", "")
+                    break
+
+            # sum_of_captcha = sum(int(d) for d in captcha if d.isdigit())
+
+            password_input.fill(password + captcha)
+
+            # NOW DOING IT AGAIN AS THIS MESSES MY NUMS UP
+            # PLEASE OPTIMISE THIS THIS IS A MESS
+            """
+            Rule 5
+            The digits in your password must add up to 25.
+            """
+
+            # recalculate the sum of digits after adding captcha
+            total_digits = [int(c) for c in captcha if c.isdigit()]
+            captcha_sum = sum(total_digits)
+
+            # subtract captcha_sum from the last digit(s) of the password so total is still 25
+            digits_in_password = [
+                i for i, c in enumerate(password) if c.isdigit()]
+            if digits_in_password:
+                # remove digits from the end of the password until the sum fits
+                remaining = captcha_sum
+                password_list = list(password)
+                digit_indices = [i for i, c in enumerate(
+                    password_list) if c.isdigit()]
+                while remaining > 0 and digit_indices:
+                    idx = digit_indices[-1]
+                    digit_val = int(password_list[idx])
+                    if digit_val <= remaining:
+                        # remove this digit completely
+                        remaining -= digit_val
+                        del password_list[idx]
+                        digit_indices.pop()
+                    else:
+                        # reduce this digit to fit
+                        password_list[idx] = str(digit_val - remaining)
+                        remaining = 0
+                password = ''.join(password_list)
+
+            # now fill with the adjusted password + captcha
+            password_input.fill(password + captcha)
+
+            # check if the sum is 25
+            total_sum = sum(int(c)
+                            for c in (password + captcha) if c.isdigit())
+            if total_sum != 25:
+                print(f"Warning: Digits sum to {total_sum}, not 25!")
+
+            """
+            Rule 14
+            Your password must include the name of this country.
+            """
+
+            time.sleep(3)
+            print("NOW READING LATITUDE")
+            print("NOW READING LATITUDE")
+            print("NOW READING LATITUDE")
+
+            iframe = page.query_selector("iframe.geo")
+            src = iframe.get_attribute("src") if iframe else None
+
+            lat, lon = None, None
+
+            if src and "!1d" in src and "!2d" in src:
+                try:
+                    # extract latitude
+                    lat_str = src.split("!1d")[1].split("!2d")[0]
+                    lat = float(lat_str)
+                    # extract longitude
+                    lon_str = src.split("!2d")[1].split("!3f")[0]
+                    lon = float(lon_str)
+                except Exception as e:
+                    print(f"Error parsing lat/lon: {e}")
+                    lat, lon = None, None
+
+            if not country:
+                country = get_country(lat, lon)
+
+            password_input.fill(password + captcha + country)
 
             command = input("Enter a password to fill or 'exit' to quit: ")
 
